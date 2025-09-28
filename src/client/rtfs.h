@@ -14,6 +14,14 @@ struct open_file {
     int local_fd;
 };
 
+extern struct rtfs_config rtfs_conf;
+
+struct rtfs_config {
+    char *remote_user;
+    char *remote_host;
+    char *remote_base;
+    char *local_base;   // usually the FUSE mountpoint
+};
 
 #endif
 

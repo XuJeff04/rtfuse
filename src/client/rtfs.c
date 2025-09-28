@@ -4,6 +4,15 @@
 #include "rtfs.h"
 
 struct open_file[MAX_OPEN_FILES];
+struct rtfs_config rtfs_conf;
+
+struct fuse_operations rt_oper = {
+        .open    = rt_open,
+        .read    = rt_read,
+        .write   = rt_write,
+        .release = rt_release,
+        .getattr = rt_getattr,
+};
 
 int rt_open(const char *path, struct fuse_file_info *fi) {
     printf("rt_open: %s\n", path);
@@ -98,4 +107,23 @@ int rt_write(const char *path, const char *buf, size_t size, off_t offset, struc
            path, size, (long long)offset, res);
 
     return (int)res;
+}
+
+
+int main(int argc, char** argv) {
+    if (argc < 5) {
+        fprintf(stderr,
+                "Usage: %s <remote_user> <remote_host> <remote_base> <mountpoint> [FUSE options]\n",
+                argv[0]);
+        exit(1);
+    }
+    rtfs_conf.remote_user = argv[1];
+    rtfs_conf.remote_host = argv[2];
+    rtfs_conf.remote_base = realpath(argv[3], NULL); // canonical remote dir string
+    argv[1] = argv[4];
+    for (int i = 2; i < argc - 3; i++) {
+        argv[i] = argv[i + 3];
+    }
+    argc -= 3;
+    return fuse_main(argc, argv, &rt_oper, NULL);
 }
