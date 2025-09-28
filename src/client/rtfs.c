@@ -1,9 +1,6 @@
-#include <limits.h>
-#include <time.h>
-#include "client_net.h"
 #include "rtfs.h"
 
-struct open_file[MAX_OPEN_FILES];
+struct open_file openfiles[MAX_OPEN_FILES];
 struct rtfs_config rtfs_conf;
 
 struct fuse_operations rt_oper = {
@@ -11,7 +8,6 @@ struct fuse_operations rt_oper = {
         .read    = rt_read,
         .write   = rt_write,
         .release = rt_release,
-        .getattr = rt_getattr,
 };
 
 int rt_open(const char *path, struct fuse_file_info *fi) {
@@ -125,5 +121,5 @@ int main(int argc, char** argv) {
         argv[i] = argv[i + 3];
     }
     argc -= 3;
-    return fuse_main(argc, argv, &rt_oper, NULL);
+    return fuse_main(argc, argv, &rt_oper);
 }
