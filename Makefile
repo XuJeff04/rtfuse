@@ -1,6 +1,6 @@
 CC = gcc 
-CFLAGS = -Wall -Wextra -D_FILE_OFFSET_BITS=64
-LDFLAGS = -lfuse
+CFLAGS = -Wall -Wextra -D_FILE_OFFSET_BITS=64 $(shell pkg-config --cflags fuse3)
+LDFLAGS = $(shell pkg-config --libs fuse3)
 DEBUGFLAGS = -g -O0
 SRC = src/client/rtfs.c
 OBJ = $(SRC:.c=.o)

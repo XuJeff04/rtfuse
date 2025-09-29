@@ -4,26 +4,138 @@ struct open_file openfiles[MAX_OPEN_FILES];
 struct rtfs_config rtfs_conf;
 
 struct fuse_operations rt_oper = {
-        .open    = rt_open,
-        .read    = rt_read,
-        .write   = rt_write,
-        .release = rt_release,
+    .getattr	= rt_getattr,
+    .readdir	= rt_readdir,
+    .open       = rt_open,
+    .read       = rt_read,
+    .write      = rt_write,
+    .release    = rt_release,
 };
+
+int rt_getattr(const char *path, struct stat *statbuf)
+{
+    printf("rt_getattr: %s\n", path);
+
+    char remote_path[PATH_MAX];
+    snprintf(remote_path, sizeof(remote_path), "%s%s", rtfs_conf.remote_base, path);
+
+    // We’ll use ssh to run stat(1) in “terse” mode (-c) on the remote host.
+    // %s: size, %f: raw mode (hex), %u: uid, %g: gid, %X: atime, %Y: mtime, %Z: ctime
+    char cmd[PATH_MAX * 4];
+    snprintf(cmd, sizeof(cmd),
+             "ssh %s@%s 'stat -c \"%%s %%f %%u %%g %%X %%Y %%Z\" \"%s\"'",
+             rtfs_conf.remote_user,
+             rtfs_conf.remote_host,
+             remote_path);
+
+    printf("running: %s\n", cmd);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        perror("popen failed");
+        return -EIO;
+    }
+
+    unsigned long size, mode_hex, uid, gid;
+    long atime, mtime, ctime;
+    if (fscanf(fp, "%lu %lx %lu %lu %ld %ld %ld",
+               &size, &mode_hex, &uid, &gid, &atime, &mtime, &ctime) != 7) {
+        perror("failed to parse stat output");
+        pclose(fp);
+        return -EIO;
+    }
+    pclose(fp);
+
+    memset(statbuf, 0, sizeof(*statbuf));
+    statbuf->st_size = size;
+    statbuf->st_mode = (mode_t)mode_hex;
+    statbuf->st_uid  = (uid_t)uid;
+    statbuf->st_gid  = (gid_t)gid;
+    statbuf->st_atime = atime;
+    statbuf->st_mtime = mtime;
+    statbuf->st_ctime = ctime;
+
+    return 0;
+}
+
+int rt_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset,
+               struct fuse_file_info *fi)
+{
+    printf("rt_readdir: %s\n", path);
+
+    // Build the remote and local paths
+    char remote_path[PATH_MAX];
+    snprintf(remote_path, sizeof(remote_path), "%s%s", rtfs_conf.remote_base, path);
+
+    // Required entries
+    filler(buf, ".", NULL, 0, 0);
+    filler(buf, "..", NULL, 0, 0);
+
+    // Command to run remotely
+    char cmd[PATH_MAX * 4];
+    snprintf(cmd, sizeof(cmd),
+             "ssh %s@%s 'ls -1 \"%s\"'",
+             rtfs_conf.remote_user,
+             rtfs_conf.remote_host,
+             remote_path);
+
+    printf("running: %s\n", cmd);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        perror("popen failed");
+        return -EIO;
+    }
+
+    char name[PATH_MAX];
+    while (fgets(name, sizeof(name), fp)) {
+        // strip newline
+        name[strcspn(name, "\n")] = 0;
+
+        if (strlen(name) > 0) {
+            filler(buf, name, NULL, 0, 0);
+        }
+    }
+
+    int ret = pclose(fp);
+    if (ret != 0) {
+        perror("ssh ls failed");
+        return -EIO;
+    }
+
+    return 0;
+}
+
+
+
 
 int rt_open(const char *path, struct fuse_file_info *fi) {
     printf("rt_open: %s\n", path);
 
     char remote_path[PATH_MAX];
-    snprintf(remote_path, sizeof(remote_path), "%s%s", REMOTE_BASE, path);
+    snprintf(remote_path, sizeof(remote_path), "%s%s", rtfs_conf.remote_base, path);
 
     char local_path[PATH_MAX];
-    snprintf(local_path, sizeof(local_path), "%s%s", LOCAL_BASE, path);
+    snprintf(local_path, sizeof(local_path), "%s%s", LOCAL_CACHE, path);
 
-    char cmd[PATH_MAX * 3];
-    snprintf(cmd, sizeof(cmd),
-             "mkdir -p \"%s\" && scp %s@%s:\"%s\" \"%s\"",
-             dirname(strdup(local_path)), REMOTE_USER, REMOTE_HOST,
-             remote_path, local_path);
+    printf("DEBUG: user=%s host=%s base=%s local_base=%s, dir=%s\n",
+           rtfs_conf.remote_user ? rtfs_conf.remote_user : "(null)",
+           rtfs_conf.remote_host ? rtfs_conf.remote_host : "(null)",
+           rtfs_conf.remote_base ? rtfs_conf.remote_base : "(null)",
+           rtfs_conf.local_base  ? rtfs_conf.local_base  : "(null)");
+
+    char *cmd = malloc(PATH_MAX * 3);
+    if (!cmd) {
+        perror("malloc failed");
+        return -ENOMEM;
+    }
+
+    system("env > /tmp/rtfs_env.txt");
+
+    snprintf(cmd, PATH_MAX * 3,
+         "scp %s@%s:\"%s\" \"%s\"",
+         rtfs_conf.remote_user, rtfs_conf.remote_host,
+         remote_path, local_path);
 
     printf("running: %s\n", cmd);
     int ret = system(cmd);
@@ -47,15 +159,15 @@ int rt_release(const char *path, struct fuse_file_info *fi) {
     printf("rt_release: %s\n", path);
 
     char remote_path[PATH_MAX];
-    snprintf(remote_path, sizeof(remote_path), "%s%s", REMOTE_BASE, path);
+    snprintf(remote_path, sizeof(remote_path), "%s%s", rtfs_conf.remote_base, path);
 
     char local_path[PATH_MAX];
-    snprintf(local_path, sizeof(local_path), "%s%s", LOCAL_BASE, path);
+    snprintf(local_path, sizeof(local_path), "%s%s", LOCAL_CACHE, path);
 
     char cmd[PATH_MAX * 3];
     snprintf(cmd, sizeof(cmd),
              "scp \"%s\" %s@%s:\"%s\"",
-             local_path, REMOTE_USER, REMOTE_HOST, remote_path);
+             local_path, rtfs_conf.remote_user, rtfs_conf.remote_host, remote_path);
 
     printf("running: %s\n", cmd);
     int ret = system(cmd);
@@ -116,10 +228,15 @@ int main(int argc, char** argv) {
     rtfs_conf.remote_user = argv[1];
     rtfs_conf.remote_host = argv[2];
     rtfs_conf.remote_base = realpath(argv[3], NULL); // canonical remote dir string
-    argv[1] = argv[4];
-    for (int i = 2; i < argc - 3; i++) {
-        argv[i] = argv[i + 3];
+    rtfs_conf.local_base  = argv[argc - 1];
+
+    int fuse_argc = argc - 3;
+    char **fuse_argv = malloc(sizeof(char*) * (fuse_argc));
+    fuse_argv[0] = argv[0];        // program name
+    for (int i = 1; i < fuse_argc; i++) {
+        fuse_argv[i] = argv[i + 3]; // shift everything left by 3
     }
-    argc -= 3;
-    return fuse_main(argc, argv, &rt_oper);
+    int ret = fuse_main(fuse_argc, fuse_argv, &rt_oper, NULL);
+    free(fuse_argv);
+    return ret;
 }

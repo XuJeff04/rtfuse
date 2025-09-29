@@ -3,12 +3,13 @@
 #define MAX_OPEN_FILES 1024
 
 // Remote server configuration
-#define REMOTE_USER     "user"
-#define REMOTE_HOST     "remote"
-#define REMOTE_BASE     "/temp/fuse"
+//#define REMOTE_USER     "user"
+//#define REMOTE_HOST     "remote"
+//#define REMOTE_BASE     "/temp/fuse"
+//#define LOCAL_BASE      "/mnt/rtfs"
+#define LOCAL_CACHE "/tmp/rtfs_cache"
+#define FUSE_USE_VERSION 31
 
-// Local mountpoint (must match where you mount the FUSE FS)
-#define LOCAL_BASE      "/mnt/rtfs"
 #include <stdio.h>
 #include <fuse.h>
 #include <stdlib.h>
@@ -18,12 +19,14 @@
 #include <limits.h>
 #include <time.h>
 #include <fcntl.h>
+#include <libgen.h>
 
 int rt_open(const char *path, struct fuse_file_info *fi);
 int rt_release(const char *path, struct fuse_file_info *fi);
 int rt_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 int rt_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
-
+int rt_getattr(const char *path, struct stat *statbuf);
+int rt_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 struct open_file {
     char remote_path[PATH_MAX];
     char local_path[PATH_MAX];
