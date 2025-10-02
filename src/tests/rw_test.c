@@ -7,9 +7,8 @@
 #include <time.h>
 #include <errno.h>
 
-#define BLOCK_SIZE 4096   // Must match alignment requirement
-#define BUF_SIZE   4096   // Read/write size (multiple of BLOCK_SIZE)
-#define ITERATIONS 1000   // Number of operations
+#define BLOCK_SIZE 4096   // Alignment requirement
+#define BUF_SIZE   4096   // Must be multiple of BLOCK_SIZE
 
 // Compute difference in nanoseconds
 long diff_ns(struct timespec start, struct timespec end) {
@@ -18,13 +17,32 @@ long diff_ns(struct timespec start, struct timespec end) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <existing-file>\n", argv[0]);
+    if (argc < 4) {
+        fprintf(stderr, "Usage: %s <read|write> <iterations> <file>\n", argv[0]);
         return 1;
     }
 
+    // Parse arguments
+    int do_write = 0;
+    if (strcmp(argv[1], "write") == 0) {
+        do_write = 1;
+    } else if (strcmp(argv[1], "read") == 0) {
+        do_write = 0;
+    } else {
+        fprintf(stderr, "First argument must be 'read' or 'write'\n");
+        return 1;
+    }
+
+    int iterations = atoi(argv[2]);
+    if (iterations <= 0) {
+        fprintf(stderr, "Iterations must be > 0\n");
+        return 1;
+    }
+
+    char *filename = argv[3];
+
     // Open file with O_DIRECT (file must already exist!)
-    int fd = open(argv[1], O_RDWR | O_DIRECT);
+    int fd = open(filename, O_RDWR | O_DIRECT);
     if (fd < 0) {
         perror("open");
         return 1;
@@ -38,42 +56,43 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    memset(buf, 'A', BUF_SIZE); // fill buffer with data
+    memset(buf, 'A', BUF_SIZE);
 
     struct timespec start, end;
 
     // --------------------
-    // Measure write loop
+    // Benchmark
     // --------------------
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int i = 0; i < ITERATIONS; i++) {
-        off_t offset = (off_t)(i % 100) * BUF_SIZE;
-        if (pwrite(fd, buf, BUF_SIZE, offset) != BUF_SIZE) {
-            perror("pwrite");
-            free(buf);
-            close(fd);
-            return 1;
-        }
-    }
-    fsync(fd);  // flush to disk
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    printf("Total write time: %.2f ms\n", diff_ns(start, end) / 1e6);
 
-    // --------------------
-    // Measure read loop
-    // --------------------
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int i = 0; i < ITERATIONS; i++) {
-        off_t offset = (off_t)(i % 100) * BUF_SIZE;
-        if (pread(fd, buf, BUF_SIZE, offset) < 0) {
-            perror("pread");
-            free(buf);
-            close(fd);
-            return 1;
+    for (int i = 0; i < iterations; i++) {
+        off_t offset = (off_t)i * BUF_SIZE;
+
+        if (do_write) {
+            if (pwrite(fd, buf, BUF_SIZE, offset) != BUF_SIZE) {
+                perror("pwrite");
+                free(buf);
+                close(fd);
+                return 1;
+            }
+        } else {
+            if (pread(fd, buf, BUF_SIZE, offset) < 0) {
+                perror("pread");
+                free(buf);
+                close(fd);
+                return 1;
+            }
         }
     }
+
     clock_gettime(CLOCK_MONOTONIC, &end);
-    printf("Total read time:  %.2f ms\n", diff_ns(start, end) / 1e6);
+
+    double elapsed_ms = diff_ns(start, end) / 1e6;
+    if (do_write) {
+        printf("Total write time (%d iterations): %.2f ms\n", iterations, elapsed_ms);
+    } else {
+        printf("Total read time (%d iterations):  %.2f ms\n", iterations, elapsed_ms);
+    }
 
     free(buf);
     close(fd);
