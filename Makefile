@@ -17,4 +17,7 @@ debug: clean $(TARGET)
 clean:
 	rm -f $(OBJ) $(TARGET)
 
+rwtest: src/tests/rw_test.c
+	gcc $(CFLAGS) src/tests/rw_test.c -o rwtest
+
 .PHONY: all debug clean
